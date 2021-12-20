@@ -1,0 +1,5 @@
+2 Simulation of virus propagation in a "resting" crowd
+
+First, we simulated the crowd as two-dimensional spherical particles, impenetrable between them. The particles are contained in a confined square space, and we have not given them a preferential direction of displacement. This model corresponds to that of ideal gas in statistical physics. We have represented the particles of two different colors, in red for the infected ones, and in green for the healthy ones. In our model, the spread of the virus is based on the number of collisions that a particle experiences with an infected particle. From a certain threshold of the number of collisions, we estimate that a particle that was not infected becomes very vulnerable, and has a high probability of being contaminated.
+We can vary several parameters of the model such as the size of the part, the total number of particles, the proportion of infected particles, the simulation time.
+
