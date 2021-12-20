@@ -3,3 +3,339 @@
 First, we simulated the crowd as two-dimensional spherical particles, impenetrable between them. The particles are contained in a confined square space, and we have not given them a preferential direction of displacement. This model corresponds to that of ideal gas in statistical physics. We have represented the particles of two different colors, in red for the infected ones, and in green for the healthy ones. In our model, the spread of the virus is based on the number of collisions that a particle experiences with an infected particle. From a certain threshold of the number of collisions, we estimate that a particle that was not infected becomes very vulnerable, and has a high probability of being contaminated.
 We can vary several parameters of the model such as the size of the part, the total number of particles, the proportion of infected particles, the simulation time.
 
+
+"""
+
+Instructions pour l'exécution du code
+
+Ce premier script contient notre simulation de foule "au repos" selon le modèle du gaz parfait.  
+
+On trouve d'abord la construction de la classe d'objet "Particule" qui définit les particules et toute la physique du modèle.
+
+Par la suite, on a les différentes fonctions qui permettent d'initialiser les positions des particules et de
+mettre à jour la simulation. 
+
+Il suffit d'exécuter tout le script pour faire afficher la simulation et l'animation avec slider. 
+Les paramètres sont ajustables dans la partie "Constantes" qui suit juste après.
+Nous avons pris nombre_particule entre 300 et 500. Plus nombre_particule est grand, plus 
+la simulation met du temps à s'afficher (compter au moins 2-3 minutes pour 300 particules).
+
+
+Un test unitaire se trouve vers la fin du script.
+ 
+À la fin du script se trouve également la fonction permettant de calculer le nombre moyen de collisions avec une particule
+infectée en fonction du nombre totale de particules. 
+
+"""
+################################################################################################################################
+
+import numpy as np
+import random
+import matplotlib.pyplot as plt
+import unittest
+from matplotlib.widgets import Slider
+%matplotlib qt 
+
+################################################################################################################################
+""" Constantes """
+
+p = 0.5                  # proportion de particules contaminées
+rayon = 2 
+masse = 1 
+nombre_particule = 300   # nombre de particules dans la simulation
+taille_boite = 200.      # taille de la piece carre 
+temps_final = 500        # temps final 
+nombre_etapes = 150      # nombre d'étapes de la simulation 
+k = 1.38064852e-23       # Constante de Boltzman
+pas_de_temps = temps_final / nombre_etapes 
+
+################################################################################################################################
+""" Construction de la classe d'objet 'Particule' """
+
+class Particule:
+    """Définit le modèle adopté"""
+    
+    def __init__(self, masse, rayon, position, vitesse, etat, compt):
+        """Initialise la particule 
+        masse, la masse de la particule
+        rayon, le rayon de la particule
+        etat, l'etat (saine ou infectee) de la particule
+        compt, le nombre de fois qu'une particule cogne une particule infectee
+        position, le vecteur position de la particule
+        vitesse, le vecteur vitesse de la particule
+        """
+        self.masse = masse
+        self.rayon = rayon
+        self.etat = etat
+        self.compt = compt
+        self.position = np.array(position)
+        self.vitesse = np.array(vitesse)
+        
+        # Les positions et les vitesses successives des particules
+        self.positions_successives = [np.copy(self.position)]    #on enregistre chaque nouvelle posititon
+        self.vitesses_successives = [np.copy(self.vitesse)]      #on enregistre chaque nouvelle vitesse
+        self.normes_vitesses_successives = [np.linalg.norm(np.copy(self.vitesse))] #on enregistre chaque nouvelle norme de vitesse 
+        
+    
+    def part_collision(self, particule):
+        """Verifie s'il y a une collision avec cette particule"""
+        
+        r1, r2 = self.rayon, particule.rayon
+        x1, x2 = self.position, particule.position
+        di = x2-x1
+        norm = np.linalg.norm(di) #on calcule la distance euclidienne entre les deux points 
+        if norm-(r1+r2) < 0: #pour regarder s'il a collision entre ces particules, il faut voir si les bords des particules se touchent. Il faut donc voir si la différence entre la distance, et la somme des deux rayons est négative, c'est-à-dire si les particules se touchent.
+            return True
+        else:
+            return False
+
+    
+    def apres_part_collision(self, particule, pas_de_temps):
+        """On implemente les nouvelles vitesses et on met a jour les compteurs """
+        m1, m2 = self.masse, particule.masse
+        r1, r2 = self.rayon, particule.rayon
+        v1, v2 = self.vitesse, particule.vitesse
+        x1, x2 = self.position, particule.position
+        c1, c2 = self.compt, particule.compt
+        e1, e2 = self.etat, particule.etat
+        dp = x2-x1
+        norm = np.linalg.norm(dp)
+        if norm-(r1+r2) < pas_de_temps*abs(np.dot(v1-v2, dp))/norm:
+            self.vitesse = v1 - 2. * m2/(m1+m2) * np.dot(v1-v2, dp) / (np.linalg.norm(dp)**2.) * dp # les chocs sont élastiques, l'énergie totale du système est conservée.
+            particule.vitesse = v2 - 2. * m1/(m2+m1) * np.dot(v2-v1, (-dp)) / (np.linalg.norm(dp)**2.) * (-dp)
+            if e2 == 1:             #si notre particule cogne une particule infectee
+                self.compt += 1     #alors notre compteur compte une collision en plus
+                    
+
+    def rebond_mur(self, pas_de_temps, size):
+        """Rebond élastique sur un mur
+        pas_de_temps le pas de temps de la simulation
+        size la taille de la particule 
+        """
+        r, v, x = self.rayon, self.vitesse, self.position
+        projx = pas_de_temps*abs(np.dot(v,np.array([1.,0.])))
+        projy = pas_de_temps*abs(np.dot(v,np.array([0.,1.])))
+        if abs(x[0])-r < projx or abs(size-x[0])-r < projx:
+            self.vitesse[0] *= -1
+        if abs(x[1])-r < projy or abs(size-x[1])-r < projy:
+            self.vitesse[1] *= -1.
+
+    def position_suivante(self, pas_de_temps):
+        """Implémente la nouvelle position"""
+        self.position += pas_de_temps * self.vitesse                #on calcule la nouvelle positiion à chaque temps t en fonction de la vitesse de notre particule
+        self.positions_successives.append(np.copy(self.position))   #on implémente la nouvelle position
+        self.vitesses_successives.append(np.copy(self.vitesse))     #on implémente la nouvelle vitessse 
+        self.normes_vitesses_successives.append(np.linalg.norm(np.copy(self.vitesse))) #on implémente la nouvelle norme
+
+################################################################################################################################
+""" Autres fonctions permettant l'initialisation de la simulation, sa mise à jour. """
+
+def etape_suivante(liste_particules, pas_de_temps, size):
+    """Calcule la position des particules pour le temps suivant """
+    
+    # Detecte si la particule cogne le bord ou une autre particule 
+    for i in range(len(liste_particules)):
+        liste_particules[i].rebond_mur(pas_de_temps,size)
+        for j in range(i+1,len(liste_particules)):
+                liste_particules[i].apres_part_collision(liste_particules[j],pas_de_temps)    
+
+    # Implemente la nouvelle position de chaque particule 
+    for particule in liste_particules:
+        particule.position_suivante(pas_de_temps)
+
+
+def init_list_random(N, p, rayon, masse, taille_boite):
+    """Génère N particules de façon aléatoire"""
+    liste_particules = [] 
+
+    for i in range(N):
+        
+        v_module = np.random.rand(1)*5       
+        angle = np.random.rand(1)*2*np.pi
+        v = np.append(v_module*np.cos(angle), v_module*np.sin(angle)) #on génère un vecteur vitesse aléatoire.
+        e = np.random.binomial(1, p)                                  #on génère un état aléatoire, 0 sain, 1 infecté
+        
+        collision = True
+        while(collision == True): #But : placer les N particules de sorte à ce qu'il n'y ait pas collisions entre elles dès le début.
+            #Tant qu'il y a collision de la particule avec celles déjà placées, on réaffecte une nouvelle position à la particule.
+            collision = False
+            pos = rayon + np.random.rand(2)*(taille_boite-2*rayon) 
+            nouvparticule = Particule(masse, rayon, pos, v, e, 0)
+            for j in range(len(liste_particules)):
+
+                collision = nouvparticule.part_collision( liste_particules[j] )
+
+                if collision == True:
+                    break
+
+        liste_particules.append(nouvparticule)
+        
+    return liste_particules
+
+
+
+def energie_totale(liste_particules, index): 
+    " calcule l'énergie totale des particules"
+    return sum([liste_particules[i].masse / 2. * liste_particules[i].normes_vitesses_successives[index]**2  for i in range(len(liste_particules))])
+
+
+def maj(time):
+    " mise à jour du tracé de la simulation" 
+    i = int(np.rint(time/pas_de_temps))
+    
+    # On dessine les particules comme des cercles
+    for j in range(nombre_particule):
+        cercles[j].center = liste_particules[j].positions_successives[i][0], liste_particules[j].positions_successives[i][1] #on met à jour les coordonnées du centre de la particule
+    hist.clear()    
+    
+    # On trace l'histogramme des vitesses 
+    listes_vitesses = [liste_particules[j].normes_vitesses_successives[i] for j in range(len(liste_particules))]
+    hist.hist(listes_vitesses, bins= 30, density = True, label = "Répartition des vitesses des particules")
+    hist.set_xlabel("Vitesses")
+    hist.set_ylabel("Fréquences")
+    
+    # On trace la distribution de Boltzmann
+    E = energie_totale(liste_particules, i)
+    Moy_E = E/len(liste_particules) 
+    T = 2*Moy_E/(2*k)
+    m = liste_particules[0].masse
+    v = np.linspace(0,10,120)
+    fonc = m*np.exp(-m*v**2/(2*T*k))/(2*np.pi*T*k)*2*np.pi*v
+    hist.plot(v,fonc, label = "Distribution de Maxwell–Boltzmann", color="red") 
+    hist.legend(loc ="upper right")
+    
+################################################################################################################################
+""" Permet de lancer la simulation et d'acquérir les positions successives des particules """
+
+liste_particules = init_list_random(nombre_particule, p, rayon, masse, taille_boite)
+
+for i in range(nombre_etapes):
+    etape_suivante(liste_particules, pas_de_temps , taille_boite)
+
+
+################################################################################################################################
+""" Visualisation de la simulation avec matplotlib et Slider """
+
+fig = plt.figure(figsize=(13, 7))
+ax = fig.add_subplot(1,2,1)
+hist = fig.add_subplot(1,2,2)
+plt.subplots_adjust(bottom=0.2,left=0.15)
+
+ax.axis('equal')
+ax.axis([-1, 30, -1, 30])
+
+ax.xaxis.set_visible(False)
+ax.yaxis.set_visible(False)
+ax.set_xlim([0,taille_boite])
+ax.set_ylim([0,taille_boite])
+
+# Dessine les particules comme des cercles 
+cercles = [None]*nombre_particule
+for i in range(nombre_particule):
+    if liste_particules[i].etat == 0:
+        cercles[i] = plt.Circle((liste_particules[i].positions_successives[0][0], liste_particules[i].positions_successives[0][1]), liste_particules[i].rayon, ec="green", lw=1.5, zorder=20)
+        ax.add_patch(cercles[i])
+        #on dessine les particules. Si elle n'est pas infectée, elle est alors en verte. Son état est défini comme 0.
+
+    if liste_particules[i].etat == 1:
+        cercles[i] = plt.Circle((liste_particules[i].positions_successives[0][0], liste_particules[i].positions_successives[0][1]), liste_particules[i].rayon, ec="red", lw=1.5, zorder=20)
+        ax.add_patch(cercles[i])
+        #ici son état est 1, ceci désigne une particule infectée, donc rouge
+    
+
+# Répartition des vitesses
+listes_vitesses = [liste_particules[i].normes_vitesses_successives[0] for i in range(len(liste_particules))] #on crée une liste formée des vitesses de chaque particule
+hist.hist(listes_vitesses, bins= 30, density = True, label = "Données de la simulation")
+hist.set_xlabel("Vitesse")
+hist.set_ylabel("Fréquences")
+
+# Tracé de la distribution de Maxwell-Boltzman
+E = energie_totale(liste_particules, 0)
+Average_E = E/len(liste_particules) 
+T = 2*Average_E/(2*k)
+m = liste_particules[0].masse
+v = np.linspace(0,10,120)
+fonc = m*np.exp(-m*v**2/(2*T*k))/(2*np.pi*T*k)*2*np.pi*v
+hist.plot(v,fonc, label = "Distribution de Maxwell–Boltzmann", color="red") 
+hist.legend(loc ="upper right")
+
+slider_ax = plt.axes([0.1, 0.05, 0.8, 0.05])
+slider = Slider(slider_ax,               # objet contenant le slider
+                  't',                   # le nom du paramètre slider
+                  0,                     # valeur minimal du temps
+                  temps_final,           # valeur max du temps
+                  valinit=0,             # valeur initial du temps
+                  color = "red"          # couleur du slider
+                 )
+
+################################################################################################################################
+slider.on_changed(maj) #met à jour le slider de temps
+
+nombre_collisions = np.array([liste_particules[j].compt for j in range(nombre_particule)])
+print(nombre_collisions) #on affiche les nombre de collisions par particules, c'est-à-dire nos compteurs.
+
+m = sum(nombre_collisions)/len(nombre_collisions) # nombre moyen de collisions avec une autre particule 
+
+x = np.linspace(0,120,120)
+fonc2 = (1/m)*np.exp(-x/m) #densite de la fonction exponentielle 
+
+#Visualisation du nombre de collisions sous matplotlib
+fig2 = plt.figure(figsize=(10,10))
+hist2 = fig2.add_subplot(1,1,1)
+hist2.hist(nombre_collisions, bins= 30, density = True, label = "Données de la simulation")
+hist2.plot(x, fonc2, label = "Loi exponentielle",color="red")
+hist2.legend(loc = "upper right")
+
+################################################################################################################################
+""" Test unitaire """
+# On vérifie que le compteur fonctionne bien. On choisit une proportion de particule infectée égale à 0 et on s'attend
+# à ce que les compteurs de toutes les particules restent à 0. 
+
+class TestCompteur(unittest.TestCase):
+    """
+    Test unitaire pour le compteur de nombre de collisions 
+    
+    """
+
+    def test_compteur(self):
+        p2 = 0 #proportion de particules contaminées
+        nombre_particule2 = 100
+        temps_final2 = 500
+        nombre_etapes2 = 150 
+        pas_de_temps2 = temps_final2 / nombre_etapes2
+        liste_particules2 = init_list_random(nombre_particule2, p2, rayon = 2, masse = 1, taille_boite = 500)
+        nombre_collisions2 = np.array([liste_particules2[j].compt for j in range(nombre_particule2)])
+        self.assertEqual(tuple(nombre_collisions2), tuple(np.zeros(nombre_particule2)))
+
+if __name__ == '__main__':
+    unittest.main()
+
+################################################################################################################################
+"""Pour évaluer le nombre moyens de collisions en fonction du nombre de particules totales, avec une proportion p d'infectés fixé à 0.5"""
+
+def nombre_moy_coll(nb_particules):
+    res = []
+    for a in range(10):
+        liste_particules2 = init_list_random(nb_particules, p, rayon, masse, taille_boite)
+        for i in range(nombre_etapes):
+            etape_suivante(liste_particules2, pas_de_temps , taille_boite)
+        nombre_collisions2 = np.array([liste_particules2[j].compt for j in range(nb_particules)])
+        m = sum(nombre_collisions2)/len(nombre_collisions2)
+        print(m)
+        res.append(m)
+    return res
+
+# Pour évaluer le nombre moyens de collisions, la simulation prend beaucoup de temps à tourner >10 min en raison du coût de etape_suivante ... 
+# Pour 300 particules, on trouve res = [26.42, 30.0 , 26.79139072847682, 27.03960396039604, 26.10855263157895, 30.62295081967213, 29.80718954248366, 25.28338762214984, 29.75974025974026, 22.627831715210355]
+# moyenne_300 = 27
+# Pour 400 particules, on trouve res = [36.73, 42.0375, 31.45, 41.445, 36.06, 38.91, 36.445, 38.3075, 33.3475, 35.115]
+# moyenne_400 = 37
+# Pour 500 particules, on trouve res = [51.116, 45.84, 44.768, 48.842, 38.748, 41.69, 45.804, 43.324, 47.888,  43.514 ]
+# moyenne_500 = 45
+
+# Ce n'est pas évident de voir comment le nombre moyen de collisions avec une particule infectée evolue avec le nombre total de
+#particule, il faudrait faire beaucoup plus de simulations avec des algorithmes moins coûteux. 
+
+
+
+
